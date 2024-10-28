@@ -30,7 +30,7 @@ def sigkernel_cuda(M_inc, len_x, len_y, n_anti_diagonals, M_sol, d_order):
 
         # Only compute if element[i, j] is on the current anti-diagonal
         if I + J == p and (I < len_x and J < len_y):
-            inc = M_inc[block_id, (i-1) << d_order, (j-1) << d_order]
+            inc = M_inc[block_id, (i-1) >> d_order, (j-1) >> d_order]
 
             k_01 = M_sol[block_id, i-1, j]
             k_10 = M_sol[block_id, i, j-1]
@@ -65,7 +65,7 @@ def sigkernel_Gram_cuda(M_inc, len_x, len_y, n_anti_diagonals, M_sol, d_order):
         # Only compute if element[i, j] is on the current anti-diagonal
         if I + J == p and (I < len_x and J < len_y):
 
-            inc = M_inc[block_id_x, block_id_y, (i-1) << d_order, (j-1) << d_order]
+            inc = M_inc[block_id_x, block_id_y, (i-1) >> d_order, (j-1) >> d_order]
 
             k_01 = M_sol[block_id_x, block_id_y, i-1, j]
             k_10 = M_sol[block_id_x, block_id_y, i, j-1]

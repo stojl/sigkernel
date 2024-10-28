@@ -214,17 +214,17 @@ class _SigKernel(torch.autograd.Function):
         # computing dsdt k(X^i_s,Y^i_t)
         G_static = static_kernel.batch_kernel(X,Y)
         G_static_ = G_static[:,1:,1:] + G_static[:,:-1,:-1] - G_static[:,1:,:-1] - G_static[:,:-1,1:]
-        G_static_ = G_static / float(2**(2 * dyadic_order))
+        G_static_ = G_static_ / float(2**(2 * dyadic_order))
         #G_static_ = tile(tile(G_static_,1,2**dyadic_order)/float(2**dyadic_order),2,2**dyadic_order)/float(2**dyadic_order)
 
         # if on GPU
         if X.device.type in ['cuda']:
 
-            assert max(MM+1,NN+1) < 1024, 'n must be lowered or data must be moved to CPU as the current choice of n makes exceed the thread limit'
+            assert max(MM,NN) < 1024, 'n must be lowered or data must be moved to CPU as the current choice of n makes exceed the thread limit'
 
             # cuda parameters
-            threads_per_block = max(MM+1,NN+1)
-            n_anti_diagonals = 2 * threads_per_block - 1
+            threads_per_block = max(MM,NN)
+            n_anti_diagonals = MM + NN - 1
 
             # Prepare the tensor of output solutions to the PDE (forward)
             K = torch.zeros((A, MM+2, NN+2), device=G_static.device, dtype=G_static.dtype)
@@ -352,7 +352,7 @@ class _SigKernelGram(torch.autograd.Function):
         # computing dsdt k(X^i_s,Y^j_t)
         G_static = static_kernel.Gram_matrix(X, Y)
         G_static_ = G_static[:, :, 1:, 1:] + G_static[:, :, :-1, :-1] - G_static[:, :, 1:, :-1] - G_static[:, :, :-1, 1:]
-        G_static_ = G_static / float(2**(2 * dyadic_order))
+        G_static_ = G_static_ / float(2**(2 * dyadic_order))
         #G_static_ = tile(tile(G_static_, 2, 2**dyadic_order)/float(2**dyadic_order), 3, 2**dyadic_order)/float(2**dyadic_order)
 
         # if on GPU
@@ -373,7 +373,7 @@ class _SigKernelGram(torch.autograd.Function):
             blockspergrid = (A, B)
             sigkernel_Gram_cuda[blockspergrid, threads_per_block](cuda.as_cuda_array(G_static_.detach()),
                                                                   MM+1, NN+1, n_anti_diagonals,
-                                                                  cuda.as_cuda_array(G), _naive_solver)
+                                                                  cuda.as_cuda_array(G), dyadic_order)
 
             G = G[:, :, :-1, :-1]
 

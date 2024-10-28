@@ -1,0 +1,14 @@
+README.md
+setup.py
+sigkernel2/__init__.py
+sigkernel2/cuda_backend.py
+sigkernel2/cython_backend.c
+sigkernel2/sigkernel.py
+sigkernel2/static_kernels.py
+sigkernel2/transformers.py
+sigkernel2.egg-info/PKG-INFO
+sigkernel2.egg-info/SOURCES.txt
+sigkernel2.egg-info/dependency_links.txt
+sigkernel2.egg-info/not-zip-safe
+sigkernel2.egg-info/requires.txt
+sigkernel2.egg-info/top_level.txt

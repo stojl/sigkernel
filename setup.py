@@ -44,7 +44,7 @@ install_requires = ["cython >= 0.29", "numba >= 0.50", "torch >= 1.6.0", "scikit
 ext_modules = [
     setuptools.Extension(
         name="cython_backend",
-        sources=["sigkernel/cython_backend.pyx"],
+        sources=["sigkernel2/cython_backend.pyx"],
         #extra_compile_args=['/openmp'],
         #extra_link_args=['/openmp'],
     )
