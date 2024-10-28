@@ -214,7 +214,8 @@ class _SigKernel(torch.autograd.Function):
         # computing dsdt k(X^i_s,Y^i_t)
         G_static = static_kernel.batch_kernel(X,Y)
         G_static_ = G_static[:,1:,1:] + G_static[:,:-1,:-1] - G_static[:,1:,:-1] - G_static[:,:-1,1:]
-        G_static_ = tile(tile(G_static_,1,2**dyadic_order)/float(2**dyadic_order),2,2**dyadic_order)/float(2**dyadic_order)
+        G_static_ = G_static / float(2**(2 * dyadic_order))
+        #G_static_ = tile(tile(G_static_,1,2**dyadic_order)/float(2**dyadic_order),2,2**dyadic_order)/float(2**dyadic_order)
 
         # if on GPU
         if X.device.type in ['cuda']:
@@ -233,7 +234,7 @@ class _SigKernel(torch.autograd.Function):
             # Compute the forward signature kernel
             sigkernel_cuda[A, threads_per_block](cuda.as_cuda_array(G_static_.detach()),
                                                  MM+1, NN+1, n_anti_diagonals,
-                                                 cuda.as_cuda_array(K), _naive_solver)
+                                                 cuda.as_cuda_array(K), dyadic_order)
             K = K[:,:-1,:-1]
 
         # if on CPU
@@ -351,7 +352,8 @@ class _SigKernelGram(torch.autograd.Function):
         # computing dsdt k(X^i_s,Y^j_t)
         G_static = static_kernel.Gram_matrix(X, Y)
         G_static_ = G_static[:, :, 1:, 1:] + G_static[:, :, :-1, :-1] - G_static[:, :, 1:, :-1] - G_static[:, :, :-1, 1:]
-        G_static_ = tile(tile(G_static_, 2, 2**dyadic_order)/float(2**dyadic_order), 3, 2**dyadic_order)/float(2**dyadic_order)
+        G_static_ = G_static / float(2**(2 * dyadic_order))
+        #G_static_ = tile(tile(G_static_, 2, 2**dyadic_order)/float(2**dyadic_order), 3, 2**dyadic_order)/float(2**dyadic_order)
 
         # if on GPU
         if X.device.type in ['cuda']:

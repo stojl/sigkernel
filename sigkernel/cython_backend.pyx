@@ -4,7 +4,7 @@
 from libc.math cimport exp
 import numpy as np
 
-def sigkernel_cython(double[:,:,:] G_static, bint _naive_solver=False):
+def sigkernel_cython(double[:,:,:] G_static):
 
     cdef int A = G_static.shape[0]
     cdef int M = G_static.shape[1]
@@ -22,13 +22,7 @@ def sigkernel_cython(double[:,:,:] G_static, bint _naive_solver=False):
 
         for i in range(M):
             for j in range(N):
-
-                if _naive_solver:
-                    K[l,i+1,j+1] = (K[l,i+1,j] + K[l,i,j+1])*(1. + 0.5*G_static[l,i,j]) - K[l,i,j]
-                    #K[l,i+1,j+1] = K[l,i+1,j] + K[l,i,j+1] + K[l,i,j]*(G_static[l,i,j] - 1.)
-                else:
-                    K[l,i+1,j+1] = (K[l,i+1,j] + K[l,i,j+1])*(1.+0.5*G_static[l,i,j]+(1./12)*G_static[l,i,j]**2) - K[l,i,j]*(1. - (1./12)*G_static[l,i,j]**2)
-                    #K[l,i+1,j+1] = K[l,i+1,j] + K[l,i,j+1] - K[l,i,j] + (exp(0.5*G_static[l,i,j])-1.)*(K[l,i+1,j] + K[l,i,j+1])
+                K[l,i+1,j+1] = (K[l,i+1,j] + K[l,i,j+1])*(1.+0.5*G_static[l,i,j]+(1./12)*G_static[l,i,j]**2) - K[l,i,j]*(1. - (1./12)*G_static[l,i,j]**2)
 
     return np.array(K)
 

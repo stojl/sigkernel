@@ -5,7 +5,7 @@ from Cython.Build import cythonize
 
 here = os.path.realpath(os.path.dirname(__file__))
 
-name = 'sigkernel'
+name = 'sigkernel2'
 
 version = '0.0.1'
 
