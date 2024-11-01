@@ -14,7 +14,7 @@ def sigkernel_cuda(M_inc, len_x, len_y, n_anti_diagonals, M_sol, d_order, L):
     # Each block corresponds to a pair (x_i,y_i).
     block_id = cuda.blockIdx.x
     thread_id = cuda.threadIdx.x
-
+    
     # Go over each anti-diagonal. Only process threads that fall on the current on the anti-diagonal
     for p in range(2, n_anti_diagonals):
         for l in range(L):
@@ -119,6 +119,90 @@ def sigkernel_cuda_alt_strided(M_inc, len_x, len_y, n_anti_diagonals, M_sol, d_o
                 k_00 = M_sol[block_id, i - 1, j - 1]        
                 
                 M_sol[block_id, i, j] = (k_01 + k_10)*(1. + 0.5*inc + (1./12)*inc**2) - k_00*(1. - (1./12)*inc**2)     
+            
+        cuda.syncthreads()
+        
+@cuda.jit
+def sigkernel_cuda_lean(M_inc, len_x, len_y, n_anti_diagonals, M_sol, d_order, L):
+    """
+    We start from a list of pairs of paths [(x^1,y^1), ..., (x^n, y^n)]
+    M_inc: a 3-tensor D[i,j,k] = <x^i_j, y^i_k>.
+    n_anti_diagonals = 2 * max(len_x, len_y) - 1
+    M_sol: a 3-tensor storing the solutions of the PDEs.
+    """
+
+    # Each block corresponds to a pair (x_i,y_i).
+    block_id = cuda.blockIdx.x
+    thread_id = cuda.threadIdx.x
+    
+    K1 = 0
+    K2 = 2
+    K3 = 1
+
+    # Go over each anti-diagonal. Only process threads that fall on the current on the anti-diagonal
+    for p in range(2, n_anti_diagonals):
+        for l in range(L):
+            i = thread_id * L + l + 1
+            j = p - i
+            
+            if i < min(len_x, p) and j < len_y:
+                inc = M_inc[block_id, (i - 1) >> d_order, (j - 1) >> d_order]
+                
+                k_01 = 1.0 if i == 1 else M_sol[block_id, i - 2, K2]
+                k_10 = 1.0 if j == 1 else M_sol[block_id, i - 1, K2]
+                k_00 = 1.0 if j == 1 or i == 1 else M_sol[block_id, i - 2, K3]
+                               
+                M_sol[block_id, i - 1, K1] = (k_01 + k_10)*(1. + 0.5*inc + (1./12)*inc**2) - k_00*(1. - (1./12)*inc**2)
+                
+                if p == n_anti_diagonals - 1:
+                    M_sol[block_id, 0, 0] = M_sol[block_id, i - 1, K1]
+
+        K1 = K1 ^ K2 ^ K3
+        K2 = K1 ^ K2 ^ K3
+        K3 = K1 ^ K2 ^ K3
+        K1 = K1 ^ K2 ^ K3
+            
+        cuda.syncthreads()
+        
+@cuda.jit
+def sigkernel_cuda_lean_strided(M_inc, len_x, len_y, n_anti_diagonals, M_sol, d_order, L):
+    """
+    We start from a list of pairs of paths [(x^1,y^1), ..., (x^n, y^n)]
+    M_inc: a 3-tensor D[i,j,k] = <x^i_j, y^i_k>.
+    n_anti_diagonals = 2 * max(len_x, len_y) - 1
+    M_sol: a 3-tensor storing the solutions of the PDEs.
+    """
+
+    # Each block corresponds to a pair (x_i,y_i).
+    block_id = cuda.blockIdx.x
+    thread_id = cuda.threadIdx.x
+    
+    K1 = 0
+    K2 = 2
+    K3 = 1
+
+    # Go over each anti-diagonal. Only process threads that fall on the current on the anti-diagonal
+    for p in range(2, n_anti_diagonals):
+        for l in range(L):
+            i = cuda.blockDim.x * l + thread_id + 1
+            j = p - i
+            
+            if i < min(len_x, p) and j < len_y:
+                inc = M_inc[block_id, (i - 1) >> d_order, (j - 1) >> d_order]
+                
+                k_01 = 1.0 if i == 1 else M_sol[block_id, i - 2, K2]
+                k_10 = 1.0 if j == 1 else M_sol[block_id, i - 1, K2]
+                k_00 = 1.0 if j == 1 or i == 1 else M_sol[block_id, i - 2, K3]
+                               
+                M_sol[block_id, i - 1, K1] = (k_01 + k_10)*(1. + 0.5*inc + (1./12)*inc**2) - k_00*(1. - (1./12)*inc**2)
+                
+                if p == n_anti_diagonals - 1:
+                    M_sol[block_id, 0, 0] = M_sol[block_id, i - 1, K1]
+
+        K1 = K1 ^ K2 ^ K3
+        K2 = K1 ^ K2 ^ K3
+        K3 = K1 ^ K2 ^ K3
+        K1 = K1 ^ K2 ^ K3
             
         cuda.syncthreads()
 

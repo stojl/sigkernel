@@ -4,7 +4,7 @@ import torch.cuda
 from numba import cuda
 
 from cython_backend import sigkernel_cython, sigkernel_Gram_cython, sigkernel_derivatives_Gram_cython
-from .cuda_backend import sigkernel_cuda, sigkernel_cuda_strided, sigkernel_cuda_alt, sigkernel_cuda_alt_strided, sigkernel_Gram_cuda, sigkernel_derivatives_Gram_cuda
+from .cuda_backend import sigkernel_cuda, sigkernel_cuda_strided, sigkernel_cuda_alt, sigkernel_cuda_alt_strided, sigkernel_Gram_cuda, sigkernel_derivatives_Gram_cuda, sigkernel_cuda_lean, sigkernel_cuda_lean_strided
 
 from .static_kernels import *
 
@@ -19,7 +19,7 @@ class SigKernel():
         self.dyadic_order = dyadic_order
         self._naive_solver = _naive_solver
 
-    def compute_kernel(self, X, Y, max_batch=100, max_threads=1024, strided=False, alt_scheme=False):
+    def compute_kernel(self, X, Y, max_batch=100, max_threads=1024, strided=False, alt_scheme=False, lean=False):
         """Input:
                   - X: torch tensor of shape (batch, length_X, dim),
                   - Y: torch tensor of shape (batch, length_Y, dim)
@@ -28,7 +28,7 @@ class SigKernel():
         """
         batch = X.shape[0]
         if batch <= max_batch:
-            K = _SigKernel.apply(X, Y, self.static_kernel, self.dyadic_order, max_threads, strided, alt_scheme)
+            K = _SigKernel.apply(X, Y, self.static_kernel, self.dyadic_order, max_threads, strided, alt_scheme, lean)
         else:
             cutoff = int(batch/2)
             X1, X2 = X[:cutoff], X[cutoff:]
@@ -195,18 +195,15 @@ class SigKernel():
 
         return K_XX_m + K_YY_m - 2. * torch.mean(K_XY)
 
-
-
 class _SigKernel(torch.autograd.Function):
     """Signature kernel k_sig(x,y) = <S(f(x)),S(f(y))> where k(x,y) = <f(x),f(y)> is a given static kernel"""
 
     @staticmethod
-    def forward(ctx, X, Y, static_kernel, dyadic_order, max_threads=1024, strided=False, alt_scheme=False):
+    def forward(ctx, X, Y, static_kernel, dyadic_order, max_threads=1024, strided=False, alt_scheme=False, lean=False):
 
         A = X.shape[0]
         M = X.shape[1]
         N = Y.shape[1]
-        D = X.shape[2]
 
         MM = (2**dyadic_order)*(M-1) + 1
         NN = (2**dyadic_order)*(N-1) + 1
@@ -245,21 +242,34 @@ class _SigKernel(torch.autograd.Function):
                 threads_per_block = ((threads_per_block + 31) // 32) * 32 # Round up to multiple of 32
                 L = -(-(MM - 1) // threads_per_block) # Thread multiplicity
                 n_anti_diagonals = MM + NN - 1
-
-                # Prepare the tensor of output solutions to the PDE (forward)
-                K = torch.zeros((A, MM, NN), device=G_static_.device, dtype=G_static_.dtype)
-                K[:,0,:] = 1.
-                K[:,:,0] = 1.
-
-                # Compute the forward signature kernel
-                if strided:
-                    sigkernel_cuda_strided[A, threads_per_block](cuda.as_cuda_array(G_static_.detach()),
-                                                    MM, NN, n_anti_diagonals,
-                                                    cuda.as_cuda_array(K), dyadic_order, L)
+                
+                if lean:
+                    K = torch.zeros(A, MM - 1, 3, device=G_static_.device, dtype=G_static_.dtype)                    
                 else:
-                    sigkernel_cuda[A, threads_per_block](cuda.as_cuda_array(G_static_.detach()),
+                    # Prepare the tensor of output solutions to the PDE (forward)
+                    K = torch.zeros((A, MM, NN), device=G_static_.device, dtype=G_static_.dtype)
+                    K[:,0,:] = 1.
+                    K[:,:,0] = 1.
+                    
+                if lean:
+                    if strided:
+                        sigkernel_cuda_lean_strided[A, threads_per_block](cuda.as_cuda_array(G_static_.detach()),
                                                     MM, NN, n_anti_diagonals,
                                                     cuda.as_cuda_array(K), dyadic_order, L)
+                    else:
+                        sigkernel_cuda_lean[A, threads_per_block](cuda.as_cuda_array(G_static_.detach()),
+                                                    MM, NN, n_anti_diagonals,
+                                                    cuda.as_cuda_array(K), dyadic_order, L)
+                    return K[:,0,0]
+                else:
+                    if strided:
+                        sigkernel_cuda_strided[A, threads_per_block](cuda.as_cuda_array(G_static_.detach()),
+                                                        MM, NN, n_anti_diagonals,
+                                                        cuda.as_cuda_array(K), dyadic_order, L)
+                    else:
+                        sigkernel_cuda[A, threads_per_block](cuda.as_cuda_array(G_static_.detach()),
+                                                        MM, NN, n_anti_diagonals,
+                                                        cuda.as_cuda_array(K), dyadic_order, L)
         # if on CPU
         else:
             K = torch.tensor(sigkernel_cython(G_static_.detach().numpy(), _naive_solver), dtype=G_static.dtype, device=G_static.device)
