@@ -176,6 +176,34 @@ class SigKernel2():
                 )
                 
                 cuda.synchronize()
-        return K
+        return K       
                 
-                
+def CHSIC(X, Y, Z, eps=0.1):
+    device = X.device
+    dtype = X.dtype
+
+    # number of samples
+    m = X.shape[0]
+
+    # centering matrix
+    H = torch.eye(m, dtype=dtype, device=device) - (1. / m) * torch.ones((m, m), dtype=dtype, device=device)
+    
+    K_X_ = H @ X @ H
+    K_Y_ = H @ Y @ H
+    K_Z_ = H @ Z @ H
+
+    # epsilon perturbation of K_Z_
+    K_Z_e = K_Z_ + m * eps * torch.eye(m, device=device)
+
+    # inverting K_Z_e
+    K_Z_e_inv = torch.cholesky_inverse(K_Z_e)
+    K_Z_e_inv2 = K_Z_e_inv @ K_Z_e_inv
+
+    # computing three terms in CHSIC
+    term_1 = torch.trace(K_X_ @ K_Y_)
+    A = K_Z_ @ K_Z_e_inv2 @ K_Z_
+    B = K_X_ @ A @ K_Y_
+    term_2 = torch.trace(B)
+    term_3 = torch.trace(B @ A)
+
+    return (term_1 - 2. * term_2 + term_3) / m ** 2
