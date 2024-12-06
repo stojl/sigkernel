@@ -2,6 +2,49 @@ import torch
 import math
 from scipy.interpolate import splrep, splev
 
+class NonLinearSDE():
+    def __init__(self):
+        return
+    
+    @staticmethod
+    def sample(n, theta=0, dt=0.005, start=0, stop=1, thin=0, device=torch.device('cuda:0'), dtype=torch.float64):
+        # Initialize tensors for the results
+        num_steps = math.ceil((stop - start) / dt)
+        X = torch.zeros(n, num_steps + 1, device=device, dtype=dtype)
+        Y = torch.zeros(n, num_steps + 1, device=device, dtype=dtype)
+        X[0], Y[0] = 0, 0
+
+        # Wiener processes for the batch
+        W1 = math.sqrt(dt) * torch.randn(n, num_steps, device=device, dtype=dtype)
+        W2 = math.sqrt(dt) * torch.randn(n, num_steps, device=device, dtype=dtype)
+
+        for t in range(1, num_steps + 1):
+            drift_X = -X[:,t - 1]**3
+            diffusion_X = torch.sqrt(1 + X[:,t - 1] ** 2)
+
+            drift_Y = theta * torch.sin(X[:,t - 1]) - Y[:,t - 1]
+            diffusion_Y = math.sqrt(theta) * torch.exp(-X[:,t - 1] ** 2) + 0.5
+
+            X[:,t] = X[:,t - 1] + drift_X * dt + diffusion_X * W1[:,t - 1]
+            Y[:,t] = Y[:,t - 1] + drift_Y * dt + diffusion_Y * W2[:,t - 1]
+
+        return X.view(n, num_steps + 1, 1)[:,range(0, num_steps + 1, 2**thin),:], Y.view(n, num_steps + 1, -1)[:,range(0, num_steps + 1, 2**thin),:]
+    
+    @staticmethod
+    def thin(x, short_min=0.5, short_max=1):
+        x = x.clone()
+        l = x.shape[1]
+        n = x.shape[0]
+        device = x.device
+        short_min = math.ceil(l * short_min)
+        short_max = math.ceil((l - 1) * short_max)
+        thin_int = torch.randint(short_min, short_max, (n,), device=device)
+        for i in range(x.shape[0]):
+            ii = torch.rand(l, device=device).argsort(dim=0)[:thin_int[i]].sort(dim=0).values
+            x[i, :thin_int[i], :] = x[i, ii, :]
+            x[i, thin_int[i]:l, :] = x[i, thin_int[i], :]
+        return x
+
 class LinearSDE():
     def __init__():
         return

@@ -2,6 +2,14 @@ import torch
 import math
 import scipy.stats.distributions as dist
 
+def derrangement(n, device):
+    indicies = torch.arange(n, device=device)
+    
+    while True:
+        perm = torch.randperm(n, device=device)
+        if torch.all(perm != indicies):
+            return perm
+
 class dCov():
     def __init__(self, X, Y):
         self.n = X.shape[0]
@@ -28,7 +36,7 @@ class dCov():
             mb_size_i = m - mb_size * (bm - 1) if i == bm - 1 else mb_size
             start = i * mb_size
             stop = i * mb_size + mb_size_i
-            perms = torch.stack([torch.randperm(self.n, device=self.device) for _ in range(mb_size_i)])
+            perms = torch.stack([derrangement(self.n, device=self.device) for _ in range(mb_size_i)])
             B_perm = torch.stack([self.B[p][:, p] for p in perms])
             tmp = (self.A * B_perm).mean(dim=(1,2))
             stats[start:stop] = tmp
@@ -96,7 +104,7 @@ class HSIC:
             mb_size_i = m - mb_size * (bm - 1) if i == bm - 1 else mb_size
             start = i * mb_size
             stop = i * mb_size + mb_size_i
-            perms = torch.stack([torch.randperm(self.n, device=self.X.device) for _ in range(mb_size_i)])
+            perms = torch.stack([derrangement(self.n, device=self.X.device) for _ in range(mb_size_i)])
             Y_perm = torch.stack([self.Y[p][:, p] for p in perms])
             tmp = torch.einsum('ij,kji->k', self.X, Y_perm) / self.n
             stats[start:stop] = tmp
@@ -159,7 +167,7 @@ class dCovMod():
             mb_size_i = m - mb_size * (bm - 1) if i == bm - 1 else mb_size
             start = i * mb_size
             stop = i * mb_size + mb_size_i
-            perms = torch.stack([torch.randperm(self.n, device=self.device) for _ in range(mb_size_i)])
+            perms = torch.stack([derrangement(self.n, device=self.device) for _ in range(mb_size_i)])
             B_perm = torch.stack([self.B[p][:, p] for p in perms])
             
             tmp = (self.A[mask_inv] * B_perm[:,mask_inv]).sum(dim=1) - 2 * (self.A[mask] * B_perm[:,mask]).sum(dim=1) / (self.n - 2)

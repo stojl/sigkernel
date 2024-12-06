@@ -3,6 +3,7 @@ setup.py
 sigkernel2/__init__.py
 sigkernel2/cuda_backend.py
 sigkernel2/cuda_backend2.py
+sigkernel2/cuda_robust.py
 sigkernel2/cython_backend.c
 sigkernel2/sigkernel.py
 sigkernel2/sigkernel2.py

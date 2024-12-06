@@ -2,6 +2,7 @@ import torch
 import torch.cuda
 from numba import cuda
 from .cuda_backend2 import sigkernel_cuda2, sigkernel_gram_cuda2, sigkernel_gram_sym_cuda2
+from .cuda_robust import sigkernel_norms
 
 def ceil_div(a, b):
     return -(-a // b)
@@ -30,6 +31,52 @@ class SigKernel2():
         G_static = self.static_kernel.Gram_matrix(X, Y)
         G_static_ = G_static[:, :, 1:, 1:] + G_static[:, :, :-1, :-1] - G_static[:, :, 1:, :-1] - G_static[:, :, :-1, 1:]
         return G_static_ / float(2**(2 * self.dyadic_order))
+    
+    def robust_kernel(self, X, norms, C, n=10, max_batch=100, max_threads=1024):
+        batch_size = X.shape[0]
+        M = X.shape[1]
+        
+        bm = ceil_div(batch_size, max_batch)
+
+        MM = (2**self.dyadic_order)*(M-1) + 1
+        n_anti_diagonals = 2 * MM - 1
+        
+        threads_per_block = min(max_threads, MM - 1, 1024)
+        threads_per_block = round_to_multiple_of_32(threads_per_block)
+        L = -(-(MM - 1) // threads_per_block)
+        
+        mb_size = min(batch_size, max_batch)
+        W = torch.zeros([mb_size, MM - 1, 3], device=X.device, dtype=X.dtype)
+        W2 = torch.zeros([mb_size, MM - 1, 3], device=X.device, dtype=X.dtype)
+        K = torch.zeros([batch_size], device=X.device, dtype=X.dtype)
+        K2 = torch.zeros([batch_size], device=X.device, dtype=X.dtype)
+        for i in range(bm):
+            mb_size_i = batch_size - mb_size * (bm - 1) if i == bm - 1 else mb_size
+            start = i * mb_size
+            stop = i * mb_size + mb_size_i
+            
+            inc = self.dist(
+                X[start:stop,:,:],
+                X[start:stop,:,:]
+                )
+            
+            sigkernel_norms[mb_size_i, threads_per_block](
+                cuda.as_cuda_array(inc.detach()),
+                cuda.as_cuda_array(C),
+                cuda.as_cuda_array(norms),
+                MM, n_anti_diagonals,
+                cuda.as_cuda_array(W),
+                cuda.as_cuda_array(W2),
+                self.dyadic_order, L,
+                n
+            )
+            
+            cuda.synchronize()
+            
+            K[start:stop] = W[0:mb_size_i,0,0]
+            K2[start:stop] = W2[0:mb_size_i,0,0]
+            
+        return K, K2, C
         
     def kernel(self, X, Y, max_batch=100, max_threads=1024):
         batch_size = X.shape[0]
