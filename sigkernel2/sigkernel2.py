@@ -2,7 +2,7 @@ import torch
 import torch.cuda
 from numba import cuda
 from .cuda_backend2 import sigkernel_cuda2, sigkernel_gram_cuda2, sigkernel_gram_sym_cuda2
-from .cuda_robust import sigkernel_norms
+from .cuda_robust import sigkernel_norms, robust_sigkernel
 
 def ceil_div(a, b):
     return -(-a // b)
@@ -16,6 +16,139 @@ def triangular_cache_size(n, m):
 
 def round_to_multiple_of_32(x):
     return ((x + 31) // 32) * 32
+
+class RobustSigKernel():
+    def __init__(self, static_kernel, dyadic_order=0, normalizer=None):
+        self.static_kernel = static_kernel
+        self.dyadic_order = dyadic_order
+        if normalizer is None:
+            normalizer = self._default_normalizer
+        self.normalizer = normalizer
+        
+    def _default_normalizer(self, x):
+        return 2 - 1 / x.sqrt()
+    
+    def guess_norm(self, x, x_norm):
+        return torch.max(torch.sqrt((-1.0 + torch.sqrt(1 - 2 * (1 - x_norm))) / (-1.0 + torch.sqrt(1 - 2 * (1 - x)))),
+                         torch.sqrt((-1.0 - torch.sqrt(1 - 2 * (1 - x_norm))) / (-1.0 - torch.sqrt(1 - 2 * (1 - x)))))
+        
+    def dist(self, X, Y):
+        G_static = self.static_kernel.batch_kernel(X, Y)
+        G_static_ = G_static[:,1:,1:] + G_static[:,:-1,:-1] - G_static[:,1:,:-1] - G_static[:,:-1,1:]
+        return G_static_ / float(2**(2 * self.dyadic_order))
+    
+    def dist_gram(self, X, Y):
+        G_static = self.static_kernel.Gram_matrix(X, Y)
+        G_static_ = G_static[:, :, 1:, 1:] + G_static[:, :, :-1, :-1] - G_static[:, :, 1:, :-1] - G_static[:, :, :-1, 1:]
+        return G_static_ / float(2**(2 * self.dyadic_order))
+    
+    def norms(self, X, maxit=100, rel_tol=1e-4, abs_tol=1e-4, max_batch=100, max_threads=1024):
+        batch_size = X.shape[0]
+        M = X.shape[1]
+        
+        bm = ceil_div(batch_size, max_batch)
+
+        MM = (2**self.dyadic_order)*(M-1) + 1
+        n_anti_diagonals = 2 * MM - 1
+        
+        threads_per_block = min(max_threads, MM - 1, 1024)
+        threads_per_block = round_to_multiple_of_32(threads_per_block)
+        L = -(-(MM - 1) // threads_per_block)
+        
+        mb_size = min(batch_size, max_batch)
+        W = torch.zeros([mb_size, MM - 1, 3], device=X.device, dtype=X.dtype)
+        W2 = torch.zeros([mb_size, MM - 1, 3], device=X.device, dtype=X.dtype)
+        K = torch.zeros([batch_size], device=X.device, dtype=X.dtype)
+        norm_const = torch.zeros([batch_size], device=X.device, dtype=X.dtype)
+
+        for i in range(bm):
+            mb_size_i = batch_size - mb_size * (bm - 1) if i == bm - 1 else mb_size
+            start = i * mb_size
+            stop = i * mb_size + mb_size_i
+            
+            inc = self.dist(
+                X[start:stop,:,:],
+                X[start:stop,:,:]
+            )
+            
+            sigkernel_cuda2[mb_size_i, threads_per_block](
+                cuda.as_cuda_array(inc.detach()),
+                MM, MM, n_anti_diagonals,
+                cuda.as_cuda_array(W), 
+                self.dyadic_order, L
+                )
+            
+            cuda.synchronize()
+            
+            K[start:stop] = W[0:mb_size_i,0,0]
+            K_norm = self.normalizer(K[start:stop])
+            norm_guess = self.guess_norm(K[start:stop], K_norm)
+            
+            sigkernel_norms[mb_size_i, threads_per_block](
+                cuda.as_cuda_array(inc.detach()),
+                cuda.as_cuda_array(norm_guess.detach()),
+                cuda.as_cuda_array(K_norm.detach()),
+                MM, n_anti_diagonals,
+                cuda.as_cuda_array(W),
+                cuda.as_cuda_array(W2),
+                self.dyadic_order, L,
+                maxit,
+                rel_tol,
+                abs_tol
+            )
+            
+            cuda.synchronize()
+            norm_const[start:stop] = norm_guess
+
+        return norm_const
+
+    def kernel(self, X, Y, maxit=100, rel_tol=1e-4, abs_tol=1e-4, max_batch=100, max_threads=1024):
+        batch_size = X.shape[0]
+        M = X.shape[1]
+        N = Y.shape[1]
+        
+        bm = ceil_div(batch_size, max_batch)
+
+        MM = (2**self.dyadic_order)*(M-1) + 1
+        NN = (2**self.dyadic_order)*(N-1) + 1
+        n_anti_diagonals = MM + NN - 1
+        
+        threads_per_block = min(max_threads, MM - 1, 1024)
+        threads_per_block = round_to_multiple_of_32(threads_per_block)
+        L = -(-(MM - 1) // threads_per_block)
+        
+        mb_size = min(batch_size, max_batch)
+        W = torch.zeros([mb_size, MM - 1, 3], device=X.device, dtype=X.dtype)
+        K = torch.zeros([batch_size], device=X.device, dtype=X.dtype)
+        
+        X_norms = self.norms(X, maxit=maxit, rel_tol=rel_tol, abs_tol=abs_tol, max_batch=max_batch, max_threads=max_threads)
+        Y_norms = self.norms(Y, maxit=maxit, rel_tol=rel_tol, abs_tol=abs_tol, max_batch=max_batch, max_threads=max_threads)
+        
+        for i in range(bm):
+            mb_size_i = batch_size - mb_size * (bm - 1) if i == bm - 1 else mb_size
+            start = i * mb_size
+            stop = i * mb_size + mb_size_i
+            
+            inc = self.dist(
+                X[start:stop,:,:],
+                Y[start:stop,:,:]
+                )
+            
+            robust_sigkernel[mb_size_i, threads_per_block](
+                cuda.as_cuda_array(inc.detach()),
+                cuda.as_cuda_array(X_norms),
+                cuda.as_cuda_array(Y_norms),
+                MM, n_anti_diagonals,
+                cuda.as_cuda_array(W), 
+                self.dyadic_order, L
+                )
+            
+            cuda.synchronize()
+            
+            K[start:stop] = W[0:mb_size_i,0,0]
+            
+        return K
+    
 
 class SigKernel2():
     def __init__(self, static_kernel, dyadic_order):
@@ -32,7 +165,7 @@ class SigKernel2():
         G_static_ = G_static[:, :, 1:, 1:] + G_static[:, :, :-1, :-1] - G_static[:, :, 1:, :-1] - G_static[:, :, :-1, 1:]
         return G_static_ / float(2**(2 * self.dyadic_order))
     
-    def robust_kernel(self, X, norms, C, n=10, max_batch=100, max_threads=1024):
+    def robust_kernel(self, X, norms, C, n=10, rel_tol=1e-4, abs_tol=1e-4, max_batch=100, max_threads=1024):
         batch_size = X.shape[0]
         M = X.shape[1]
         
@@ -68,7 +201,9 @@ class SigKernel2():
                 cuda.as_cuda_array(W),
                 cuda.as_cuda_array(W2),
                 self.dyadic_order, L,
-                n
+                n,
+                rel_tol,
+                abs_tol
             )
             
             cuda.synchronize()
