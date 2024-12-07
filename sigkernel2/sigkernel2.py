@@ -102,7 +102,7 @@ class RobustSigKernel():
 
         return norm_const
 
-    def kernel(self, X, Y, maxit=100, rel_tol=1e-4, abs_tol=1e-4, max_batch=100, max_threads=1024):
+    def kernel(self, X, Y, maxit=100, rel_tol=1e-4, abs_tol=1e-4, max_batch=100, max_threads=1024, y_norms=None, x_norms=None):
         batch_size = X.shape[0]
         M = X.shape[1]
         N = Y.shape[1]
@@ -121,8 +121,8 @@ class RobustSigKernel():
         W = torch.zeros([mb_size, MM - 1, 3], device=X.device, dtype=X.dtype)
         K = torch.zeros([batch_size], device=X.device, dtype=X.dtype)
         
-        X_norms = self.norms(X, maxit=maxit, rel_tol=rel_tol, abs_tol=abs_tol, max_batch=max_batch, max_threads=max_threads)
-        Y_norms = self.norms(Y, maxit=maxit, rel_tol=rel_tol, abs_tol=abs_tol, max_batch=max_batch, max_threads=max_threads)
+        X_norms = self.norms(X, maxit=maxit, rel_tol=rel_tol, abs_tol=abs_tol, max_batch=max_batch, max_threads=max_threads) if x_norms is None else x_norms 
+        Y_norms = self.norms(Y, maxit=maxit, rel_tol=rel_tol, abs_tol=abs_tol, max_batch=max_batch, max_threads=max_threads) if y_norms is None else y_norms
         
         for i in range(bm):
             mb_size_i = batch_size - mb_size * (bm - 1) if i == bm - 1 else mb_size
